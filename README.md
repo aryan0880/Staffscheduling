@@ -1,9 +1,6 @@
 
   # Staff Scheduling and Shift Management System
 
-  This is a code bundle for Staff Scheduling Dashboard Prototype. The original project is available at 
-https://nicks-pin-98770838.figma.site/.
-
 📌 Project Overview
 
 The Staff Scheduling and Shift Management System (SSMS) is a web-based application developed to automate the process of managing staff shifts, schedules, and leave requests.
