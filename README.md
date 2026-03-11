@@ -1,6 +1,7 @@
 
   # Staff Scheduling and Shift Management System
 
+
 📌 Project Overview
 
 The Staff Scheduling and Shift Management System (SSMS) is a web-based application developed to automate the process of managing staff shifts, schedules, and leave requests.
