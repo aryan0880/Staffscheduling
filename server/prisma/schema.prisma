@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  role         String
+  name         String
+  email        String   @unique
+  passwordHash String?
+  googleId     String?  @unique
+  department   String?
+  contact      String?
+  availability String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignments  Assignment[]
+  leaves       LeaveRequest[]
+}
+
+model Shift {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  startTime String
+  endTime   String
+  type      String   @default("Regular")
+  staffCount Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assignments Assignment[]
+}
+
+model Assignment {
+  id        Int      @id @default(autoincrement())
+  date      DateTime
+  createdAt DateTime @default(now())
+
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  shiftId   Int
+  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([date])
+}
+
+model LeaveRequest {
+  id        Int         @id @default(autoincrement())
+  fromDate  DateTime
+  toDate    DateTime
+  reason    String
+  status    String      @default("pending")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  userId    Int
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+

@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Check, X, Clock, FileText, CheckCircle, XCircle } from "lucide-react";
+import { apiFetch, type ApiError } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 
 type Status = "Pending" | "Approved" | "Rejected";
 
@@ -13,16 +15,6 @@ interface LeaveRequest {
   status: Status;
   days: number;
 }
-
-const initialLeaves: LeaveRequest[] = [
-  { id: 1, staff: "Sarah Johnson", department: "Operations", fromDate: "2025-02-26", toDate: "2025-02-28", reason: "Family medical emergency", status: "Pending", days: 3 },
-  { id: 2, staff: "Mark Williams", department: "HR", fromDate: "2025-03-01", toDate: "2025-03-03", reason: "Annual vacation", status: "Approved", days: 3 },
-  { id: 3, staff: "Priya Sharma", department: "IT", fromDate: "2025-02-27", toDate: "2025-02-27", reason: "Personal matters", status: "Rejected", days: 1 },
-  { id: 4, staff: "James Carter", department: "Finance", fromDate: "2025-03-05", toDate: "2025-03-07", reason: "Attend a wedding", status: "Pending", days: 3 },
-  { id: 5, staff: "Alice Brown", department: "Operations", fromDate: "2025-03-10", toDate: "2025-03-12", reason: "Medical appointment", status: "Pending", days: 3 },
-  { id: 6, staff: "David Patel", department: "Reception", fromDate: "2025-03-15", toDate: "2025-03-16", reason: "Home renovation", status: "Approved", days: 2 },
-  { id: 7, staff: "Emma Wilson", department: "Operations", fromDate: "2025-03-20", toDate: "2025-03-22", reason: "University exam", status: "Rejected", days: 3 },
-];
 
 const statusBadge = (status: Status) => {
   const map = {
@@ -44,50 +36,125 @@ const formatDate = (d: string) =>
 
 const today = new Date().toISOString().split("T")[0];
 
+const calcDays = (fromDate: string, toDate: string) => {
+  const from = new Date(fromDate);
+  const to = new Date(toDate);
+  return Math.max(1, Math.ceil((to.getTime() - from.getTime()) / 86400000) + 1);
+};
+
+const toStatus = (s: string): Status =>
+  s === "approved" ? "Approved" : s === "rejected" ? "Rejected" : "Pending";
+const fromStatus = (s: Status) => (s === "Approved" ? "approved" : s === "Rejected" ? "rejected" : "pending");
+
 export function LeaveManagement() {
-  const [leaves, setLeaves] = useState<LeaveRequest[]>(initialLeaves);
+  const { token } = useAuth();
+  const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [activeTab, setActiveTab] = useState<"staff" | "admin">("admin");
   const [filterStatus, setFilterStatus] = useState<"All" | Status>("All");
   const [form, setForm] = useState({ fromDate: today, toDate: today, reason: "" });
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const filtered = leaves.filter((l) => filterStatus === "All" || l.status === filterStatus);
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!token) return;
+      if (activeTab !== "admin") return;
+      setLoading(true);
+      setError("");
+      try {
+        const qs = filterStatus === "All" ? "" : `?status=${fromStatus(filterStatus)}`;
+        const data = await apiFetch<any[]>(`/admin/leave-requests${qs}`, { token });
+        const mapped: LeaveRequest[] = data.map((l) => ({
+          id: l.id,
+          staff: l.user?.name || "Unknown",
+          department: l.user?.department || "-",
+          fromDate: new Date(l.fromDate).toISOString().slice(0, 10),
+          toDate: new Date(l.toDate).toISOString().slice(0, 10),
+          reason: l.reason,
+          status: toStatus(l.status),
+          days: calcDays(new Date(l.fromDate).toISOString().slice(0, 10), new Date(l.toDate).toISOString().slice(0, 10)),
+        }));
+        if (!cancelled) setLeaves(mapped);
+      } catch (e: any) {
+        const err = e as ApiError;
+        if (!cancelled) setError(err?.message || "Failed to load leave requests");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, activeTab, filterStatus]);
 
-  const approve = (id: number) =>
-    setLeaves((prev) => prev.map((l) => (l.id === id ? { ...l, status: "Approved" } : l)));
-  const reject = (id: number) =>
-    setLeaves((prev) => prev.map((l) => (l.id === id ? { ...l, status: "Rejected" } : l)));
+  const filtered = useMemo(
+    () => leaves.filter((l) => filterStatus === "All" || l.status === filterStatus),
+    [leaves, filterStatus]
+  );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const approve = async (id: number) => {
+    if (!token) return;
+    setError("");
+    try {
+      await apiFetch(`/admin/leave-requests/${id}`, {
+        token,
+        method: "PUT",
+        body: JSON.stringify({ status: "approved" }),
+      });
+      setLeaves((prev) => prev.map((l) => (l.id === id ? { ...l, status: "Approved" } : l)));
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Approve failed");
+    }
+  };
+  const reject = async (id: number) => {
+    if (!token) return;
+    setError("");
+    try {
+      await apiFetch(`/admin/leave-requests/${id}`, {
+        token,
+        method: "PUT",
+        body: JSON.stringify({ status: "rejected" }),
+      });
+      setLeaves((prev) => prev.map((l) => (l.id === id ? { ...l, status: "Rejected" } : l)));
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Reject failed");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.fromDate || !form.toDate || !form.reason) return;
-    const from = new Date(form.fromDate);
-    const to = new Date(form.toDate);
-    const days = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / 86400000) + 1);
-    setLeaves((prev) => [
-      {
-        id: Date.now(),
-        staff: "Admin User",
-        department: "Administration",
-        fromDate: form.fromDate,
-        toDate: form.toDate,
-        reason: form.reason,
-        status: "Pending",
-        days,
-      },
-      ...prev,
-    ]);
-    setForm({ fromDate: today, toDate: today, reason: "" });
-    setSubmitted(true);
-    setTimeout(() => setSubmitted(false), 3000);
+    if (!token) return;
+    setError("");
+    try {
+      await apiFetch("/me/leave-requests", {
+        token,
+        method: "POST",
+        body: JSON.stringify({ ...form }),
+      });
+      setForm({ fromDate: today, toDate: today, reason: "" });
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 3000);
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Submit failed");
+    }
   };
 
-  const counts = {
-    All: leaves.length,
-    Pending: leaves.filter((l) => l.status === "Pending").length,
-    Approved: leaves.filter((l) => l.status === "Approved").length,
-    Rejected: leaves.filter((l) => l.status === "Rejected").length,
-  };
+  const counts = useMemo(
+    () => ({
+      All: leaves.length,
+      Pending: leaves.filter((l) => l.status === "Pending").length,
+      Approved: leaves.filter((l) => l.status === "Approved").length,
+      Rejected: leaves.filter((l) => l.status === "Rejected").length,
+    }),
+    [leaves]
+  );
 
   return (
     <div className="space-y-5">
@@ -95,6 +162,12 @@ export function LeaveManagement() {
         <h2 className="text-gray-900 text-lg font-semibold">Leave Management</h2>
         <p className="text-gray-500 text-sm mt-0.5">Manage and review staff leave requests</p>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
 
       {/* Tab Toggle */}
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
@@ -210,7 +283,7 @@ export function LeaveManagement() {
               <h3 className="text-sm font-semibold text-gray-900">
                 {filterStatus === "All" ? "All Leave Requests" : `${filterStatus} Requests`}
               </h3>
-              <span className="text-xs text-gray-400">{filtered.length} records</span>
+              <span className="text-xs text-gray-400">{loading ? "Loading..." : `${filtered.length} records`}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[700px]">
@@ -227,7 +300,11 @@ export function LeaveManagement() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {filtered.length === 0 ? (
+                  {loading ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-10 text-gray-400 text-sm">Loading...</td>
+                    </tr>
+                  ) : filtered.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="text-center py-10 text-gray-400 text-sm">No leave requests found.</td>
                     </tr>

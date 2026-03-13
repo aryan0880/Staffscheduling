@@ -2,21 +2,6 @@ import React, { useState } from "react";
 import { User, Mail, Phone, Building2, Calendar, Lock, Pencil, Check, X, ShieldCheck } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 
-const STAFF_DETAILS: Record<string, { contact: string; joinDate: string; empId: string; shift: string; availability: string }> = {
-  "Alice Brown":   { contact: "+1-555-0101", joinDate: "2023-06-15", empId: "EMP001", shift: "Morning Shift",   availability: "Full-time" },
-  "Bob Kumar":     { contact: "+1-555-0102", joinDate: "2022-11-20", empId: "EMP002", shift: "Afternoon Shift", availability: "Part-time" },
-  "Carol Lee":     { contact: "+1-555-0103", joinDate: "2024-01-08", empId: "EMP003", shift: "Night Shift",     availability: "Full-time" },
-  "David Patel":   { contact: "+1-555-0104", joinDate: "2021-09-01", empId: "EMP004", shift: "Morning Shift",   availability: "Full-time" },
-  "Emma Wilson":   { contact: "+1-555-0105", joinDate: "2023-03-14", empId: "EMP005", shift: "Afternoon Shift", availability: "On-call" },
-  "Frank Davis":   { contact: "+1-555-0106", joinDate: "2020-07-22", empId: "EMP006", shift: "Morning Shift",   availability: "Full-time" },
-  "Grace Kim":     { contact: "+1-555-0107", joinDate: "2024-02-10", empId: "EMP007", shift: "Morning Shift",   availability: "Part-time" },
-  "Henry Johnson": { contact: "+1-555-0108", joinDate: "2022-05-30", empId: "EMP008", shift: "Morning Shift",   availability: "Full-time" },
-  "Isla Martinez": { contact: "+1-555-0109", joinDate: "2023-08-19", empId: "EMP009", shift: "Afternoon Shift", availability: "On-call" },
-  "James Carter":  { contact: "+1-555-0110", joinDate: "2021-12-01", empId: "EMP010", shift: "Afternoon Shift", availability: "Full-time" },
-};
-
-const DEFAULT_DETAILS = { contact: "+1-555-0000", joinDate: "2023-01-01", empId: "EMP000", shift: "Morning Shift", availability: "Full-time" };
-
 const availBadge = (a: string) => {
   const m: Record<string, string> = {
     "Full-time": "bg-green-50 text-green-700 border border-green-200",
@@ -41,7 +26,13 @@ const getTenure = (joinDate: string) => {
 export function MyProfile() {
   const { user } = useAuth();
   const name = user?.name || "Staff User";
-  const details = STAFF_DETAILS[name] || DEFAULT_DETAILS;
+  const details = {
+    contact: user?.contact || "+1-555-0000",
+    joinDate: "2023-01-01",
+    empId: `EMP${String(user?.id || 0).padStart(3, "0")}`,
+    shift: "Shift",
+    availability: user?.availability || "Full-time",
+  };
 
   const [editing, setEditing] = useState(false);
   const [contact, setContact] = useState(details.contact);

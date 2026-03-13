@@ -1,50 +1,11 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CalendarCheck, Clock, FileText, TrendingUp, ChevronRight } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate } from "react-router";
+import { apiFetch, type ApiError } from "../../api/client";
 
-// Per-staff mock schedule data
-const STAFF_SCHEDULE: Record<string, { shift: string; time: string; date: string; status: string }[]> = {
-  "Alice Brown":   [
-    { shift: "Morning Shift", time: "6:00 AM – 2:00 PM",   date: "2025-02-26", status: "Today" },
-    { shift: "Morning Shift", time: "6:00 AM – 2:00 PM",   date: "2025-02-27", status: "Upcoming" },
-    { shift: "Morning Shift", time: "6:00 AM – 2:00 PM",   date: "2025-03-01", status: "Upcoming" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM", date: "2025-03-03", status: "Upcoming" },
-    { shift: "Morning Shift", time: "6:00 AM – 2:00 PM",   date: "2025-03-05", status: "Upcoming" },
-  ],
-  "Bob Kumar":     [
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM", date: "2025-02-26", status: "Today" },
-    { shift: "Night Shift",     time: "10:00 PM – 6:00 AM", date: "2025-02-28", status: "Upcoming" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM", date: "2025-03-02", status: "Upcoming" },
-  ],
-  "Carol Lee":     [
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-02-26", status: "Today" },
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-03-01", status: "Upcoming" },
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-03-04", status: "Upcoming" },
-  ],
-  "David Patel":   [
-    { shift: "Morning Shift", time: "6:00 AM – 2:00 PM", date: "2025-02-27", status: "Upcoming" },
-    { shift: "Morning Shift", time: "6:00 AM – 2:00 PM", date: "2025-03-02", status: "Upcoming" },
-  ],
-  "Emma Wilson":   [
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM", date: "2025-02-26", status: "Today" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM", date: "2025-03-01", status: "Upcoming" },
-  ],
-};
-
-const STAFF_LEAVES: Record<string, { from: string; to: string; reason: string; status: "Pending" | "Approved" | "Rejected" }[]> = {
-  "Alice Brown":  [
-    { from: "2025-02-10", to: "2025-02-12", reason: "Family event",       status: "Approved" },
-    { from: "2025-03-10", to: "2025-03-12", reason: "Medical appointment", status: "Pending" },
-  ],
-  "Bob Kumar":    [
-    { from: "2025-01-20", to: "2025-01-22", reason: "Vacation",           status: "Approved" },
-    { from: "2025-03-15", to: "2025-03-16", reason: "Personal",           status: "Pending" },
-  ],
-  "Carol Lee":    [
-    { from: "2025-02-05", to: "2025-02-06", reason: "Sick leave",         status: "Rejected" },
-  ],
-};
+type MyAssignment = { shift: string; time: string; date: string; status: "Today" | "Upcoming" };
+type MyLeave = { from: string; to: string; reason: string; status: "Pending" | "Approved" | "Rejected" };
 
 const getGreeting = () => {
   const h = new Date().getHours();
@@ -68,22 +29,74 @@ const formatDate = (d: string) =>
   new Date(d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
 export function StaffDashboard() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const navigate = useNavigate();
   const name = user?.name || "Staff";
 
-  const mySchedule = STAFF_SCHEDULE[name] || [];
-  const myLeaves   = STAFF_LEAVES[name] || [];
-  const todayShift = mySchedule.find((s) => s.status === "Today");
-  const upcoming   = mySchedule.filter((s) => s.status === "Upcoming").slice(0, 4);
+  const [mySchedule, setMySchedule] = useState<MyAssignment[]>([]);
+  const [myLeaves, setMyLeaves] = useState<MyLeave[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!token) return;
+      setError("");
+      try {
+        const [assignments, leaves] = await Promise.all([
+          apiFetch<any[]>("/me/assignments", { token }),
+          apiFetch<any[]>("/me/leave-requests", { token }),
+        ]);
+        if (cancelled) return;
+
+        const today = new Date().toISOString().slice(0, 10);
+        const schedule: MyAssignment[] = assignments
+          .map((a) => {
+            const d = new Date(a.date).toISOString().slice(0, 10);
+            return {
+              shift: a.shift?.name || "Shift",
+              time: a.shift ? `${a.shift.startTime} – ${a.shift.endTime}` : "",
+              date: d,
+              status: d === today ? "Today" : "Upcoming",
+            } as MyAssignment;
+          })
+          .sort((a, b) => a.date.localeCompare(b.date));
+
+        const mappedLeaves: MyLeave[] = leaves.map((l) => ({
+          from: new Date(l.fromDate).toISOString().slice(0, 10),
+          to: new Date(l.toDate).toISOString().slice(0, 10),
+          reason: l.reason,
+          status: l.status === "approved" ? "Approved" : l.status === "rejected" ? "Rejected" : "Pending",
+        }));
+
+        setMySchedule(schedule);
+        setMyLeaves(mappedLeaves);
+      } catch (e: any) {
+        const err = e as ApiError;
+        if (!cancelled) setError(err?.message || "Failed to load dashboard data");
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const todayShift = useMemo(() => mySchedule.find((s) => s.status === "Today"), [mySchedule]);
+  const upcoming = useMemo(() => mySchedule.filter((s) => s.status === "Upcoming").slice(0, 4), [mySchedule]);
 
   const approvedLeaves = myLeaves.filter((l) => l.status === "Approved").length;
-  const pendingLeaves  = myLeaves.filter((l) => l.status === "Pending").length;
+  const pendingLeaves = myLeaves.filter((l) => l.status === "Pending").length;
   const leaveBalance   = 12 - approvedLeaves;
   const shiftsThisMonth = mySchedule.length;
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
       {/* Welcome Banner */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm px-6 py-5 flex items-center justify-between">
         <div>

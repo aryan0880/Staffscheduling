@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CheckCircle, XCircle, Clock, FileText, Plus } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { apiFetch, type ApiError } from "../../api/client";
 
 type Status = "Pending" | "Approved" | "Rejected";
 
@@ -13,20 +14,6 @@ interface Leave {
   days: number;
   appliedOn: string;
 }
-
-const INITIAL_LEAVES: Record<string, Leave[]> = {
-  "Alice Brown": [
-    { id: 1, fromDate: "2025-02-10", toDate: "2025-02-12", reason: "Family event",        status: "Approved", days: 3, appliedOn: "2025-02-01" },
-    { id: 2, fromDate: "2025-03-10", toDate: "2025-03-12", reason: "Medical appointment", status: "Pending",  days: 3, appliedOn: "2025-02-20" },
-  ],
-  "Bob Kumar": [
-    { id: 1, fromDate: "2025-01-20", toDate: "2025-01-22", reason: "Vacation",  status: "Approved", days: 3, appliedOn: "2025-01-10" },
-    { id: 2, fromDate: "2025-03-15", toDate: "2025-03-16", reason: "Personal",  status: "Pending",  days: 2, appliedOn: "2025-02-25" },
-  ],
-  "Carol Lee": [
-    { id: 1, fromDate: "2025-02-05", toDate: "2025-02-06", reason: "Sick leave", status: "Rejected", days: 2, appliedOn: "2025-02-03" },
-  ],
-};
 
 const statusBadge = (s: Status) => {
   const m: Record<Status, string> = {
@@ -47,44 +34,106 @@ const formatDate = (d: string) =>
   new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 const today = new Date().toISOString().split("T")[0];
+const calcDays = (fromDate: string, toDate: string) => {
+  const from = new Date(fromDate);
+  const to = new Date(toDate);
+  return Math.max(1, Math.ceil((to.getTime() - from.getTime()) / 86400000) + 1);
+};
+const toStatus = (s: string): Status =>
+  s === "approved" ? "Approved" : s === "rejected" ? "Rejected" : "Pending";
 
 export function MyLeaves() {
-  const { user } = useAuth();
-  const name = user?.name || "";
-
-  const [leaves, setLeaves] = useState<Leave[]>(INITIAL_LEAVES[name] || []);
+  const { token } = useAuth();
+  const [leaves, setLeaves] = useState<Leave[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm]  = useState({ fromDate: today, toDate: today, reason: "" });
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const approved = leaves.filter((l) => l.status === "Approved").length;
-  const pending  = leaves.filter((l) => l.status === "Pending").length;
-  const rejected = leaves.filter((l) => l.status === "Rejected").length;
-  const usedDays = leaves.filter((l) => l.status === "Approved").reduce((a, l) => a + l.days, 0);
-  const balance  = 12 - usedDays;
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!token) return;
+      setLoading(true);
+      setError("");
+      try {
+        const data = await apiFetch<any[]>("/me/leave-requests", { token });
+        const mapped: Leave[] = data.map((l) => {
+          const fromDate = new Date(l.fromDate).toISOString().slice(0, 10);
+          const toDate = new Date(l.toDate).toISOString().slice(0, 10);
+          const appliedOn = new Date(l.createdAt || Date.now()).toISOString().slice(0, 10);
+          return {
+            id: l.id,
+            fromDate,
+            toDate,
+            reason: l.reason,
+            status: toStatus(l.status),
+            days: calcDays(fromDate, toDate),
+            appliedOn,
+          };
+        });
+        if (!cancelled) setLeaves(mapped);
+      } catch (e: any) {
+        const err = e as ApiError;
+        if (!cancelled) setError(err?.message || "Failed to load leaves");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const approved = useMemo(() => leaves.filter((l) => l.status === "Approved").length, [leaves]);
+  const pending = useMemo(() => leaves.filter((l) => l.status === "Pending").length, [leaves]);
+  const rejected = useMemo(() => leaves.filter((l) => l.status === "Rejected").length, [leaves]);
+  const usedDays = useMemo(() => leaves.filter((l) => l.status === "Approved").reduce((a, l) => a + l.days, 0), [leaves]);
+  const balance = 12 - usedDays;
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.fromDate || !form.toDate || !form.reason.trim()) return;
-    const days = Math.max(1, Math.ceil((new Date(form.toDate).getTime() - new Date(form.fromDate).getTime()) / 86400000) + 1);
-    const newLeave: Leave = {
-      id: Date.now(),
-      fromDate: form.fromDate,
-      toDate: form.toDate,
-      reason: form.reason,
-      status: "Pending",
-      days,
-      appliedOn: today,
-    };
-    setLeaves((prev) => [newLeave, ...prev]);
-    setForm({ fromDate: today, toDate: today, reason: "" });
-    setShowForm(false);
-    setSubmitted(true);
-    setTimeout(() => setSubmitted(false), 4000);
+    if (!token) return;
+    setError("");
+    try {
+      const created = await apiFetch<any>("/me/leave-requests", {
+        token,
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      const fromDate = new Date(created.fromDate).toISOString().slice(0, 10);
+      const toDate = new Date(created.toDate).toISOString().slice(0, 10);
+      const appliedOn = new Date(created.createdAt || Date.now()).toISOString().slice(0, 10);
+      const newLeave: Leave = {
+        id: created.id,
+        fromDate,
+        toDate,
+        reason: created.reason,
+        status: "Pending",
+        days: calcDays(fromDate, toDate),
+        appliedOn,
+      };
+      setLeaves((prev) => [newLeave, ...prev]);
+      setForm({ fromDate: today, toDate: today, reason: "" });
+      setShowForm(false);
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 4000);
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Submit failed");
+    }
   };
 
   return (
     <div className="space-y-5">
+      {error && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-gray-900 text-lg font-semibold">My Leave Requests</h2>
@@ -204,6 +253,11 @@ export function MyLeaves() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
+              {loading && (
+                <tr>
+                  <td colSpan={6} className="text-center py-12 text-gray-400 text-sm">Loading...</td>
+                </tr>
+              )}
               {leaves.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="text-center py-12 text-gray-400 text-sm">

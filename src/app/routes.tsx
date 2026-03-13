@@ -2,6 +2,7 @@ import React from "react";
 import { createBrowserRouter, Navigate } from "react-router";
 import { Layout } from "./components/Layout";
 import { StaffLayout } from "./components/StaffLayout";
+import { RequireRole } from "./components/RequireRole";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { StaffManagement } from "./pages/StaffManagement";
@@ -22,7 +23,11 @@ export const router = createBrowserRouter([
   // ── Admin routes ──────────────────────────────────────────────
   {
     path: "/app",
-    element: <Layout />,
+    element: (
+      <RequireRole role="admin">
+        <Layout />
+      </RequireRole>
+    ),
     children: [
       { index: true, element: <Navigate to="/app/dashboard" replace /> },
       { path: "dashboard", element: <Dashboard /> },
@@ -36,7 +41,11 @@ export const router = createBrowserRouter([
   // ── Staff routes ──────────────────────────────────────────────
   {
     path: "/staff",
-    element: <StaffLayout />,
+    element: (
+      <RequireRole role="staff">
+        <StaffLayout />
+      </RequireRole>
+    ),
     children: [
       { index: true, element: <Navigate to="/staff/dashboard" replace /> },
       { path: "dashboard", element: <StaffDashboard /> },

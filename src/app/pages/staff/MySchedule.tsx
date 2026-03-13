@@ -1,44 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Clock, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import { apiFetch, type ApiError } from "../../api/client";
 
-const ALL_SHIFTS: Record<string, { shift: string; time: string; date: string; type: string }[]> = {
-  "Alice Brown": [
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-02-03", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-02-05", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-02-10", type: "Regular" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM",  date: "2025-02-14", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-02-19", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-02-24", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-02-26", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-02-27", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-03-01", type: "Regular" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM",  date: "2025-03-03", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-03-05", type: "Regular" },
-    { shift: "Morning Shift",   time: "6:00 AM – 2:00 PM",   date: "2025-03-10", type: "Regular" },
-  ],
-  "Bob Kumar": [
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM",  date: "2025-02-04", type: "Regular" },
-    { shift: "Night Shift",     time: "10:00 PM – 6:00 AM",  date: "2025-02-07", type: "Regular" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM",  date: "2025-02-12", type: "Regular" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM",  date: "2025-02-26", type: "Regular" },
-    { shift: "Night Shift",     time: "10:00 PM – 6:00 AM",  date: "2025-02-28", type: "Regular" },
-    { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM",  date: "2025-03-02", type: "Regular" },
-  ],
-  "Carol Lee": [
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-02-02", type: "Regular" },
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-02-08", type: "Regular" },
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-02-15", type: "Regular" },
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-02-26", type: "Regular" },
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-03-01", type: "Regular" },
-    { shift: "Night Shift", time: "10:00 PM – 6:00 AM", date: "2025-03-04", type: "Regular" },
-  ],
-};
-
-const DEFAULT_SHIFTS = [
-  { shift: "Morning Shift", time: "6:00 AM – 2:00 PM", date: "2025-02-26", type: "Regular" },
-  { shift: "Afternoon Shift", time: "2:00 PM – 10:00 PM", date: "2025-03-03", type: "Regular" },
-];
+type MyShift = { shift: string; time: string; date: string; type: string };
 
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -57,12 +22,41 @@ function getDaysInMonth(y: number, m: number) { return new Date(y, m + 1, 0).get
 function getFirstDay(y: number, m: number) { return new Date(y, m, 1).getDay(); }
 
 export function MySchedule() {
-  const { user } = useAuth();
-  const name = user?.name || "";
-  const allShifts = ALL_SHIFTS[name] || DEFAULT_SHIFTS;
+  const { token } = useAuth();
+  const [allShifts, setAllShifts] = useState<MyShift[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const [view, setView] = useState<"list" | "calendar">("list");
   const [calDate, setCalDate] = useState(new Date(2025, 1, 1));
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!token) return;
+      setLoading(true);
+      setError("");
+      try {
+        const data = await apiFetch<any[]>("/me/assignments", { token });
+        const mapped: MyShift[] = data.map((a) => ({
+          shift: a.shift?.name || "Shift",
+          time: a.shift ? `${a.shift.startTime} – ${a.shift.endTime}` : "",
+          date: new Date(a.date).toISOString().slice(0, 10),
+          type: a.shift?.type || "Regular",
+        }));
+        if (!cancelled) setAllShifts(mapped);
+      } catch (e: any) {
+        const err = e as ApiError;
+        if (!cancelled) setError(err?.message || "Failed to load schedule");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const year = calDate.getFullYear();
   const month = calDate.getMonth();
@@ -70,10 +64,14 @@ export function MySchedule() {
   const firstDay = getFirstDay(year, month);
 
   // Filter shifts for current calendar month
-  const shiftsThisMonth = allShifts.filter((s) => {
-    const d = new Date(s.date);
-    return d.getFullYear() === year && d.getMonth() === month;
-  });
+  const shiftsThisMonth = useMemo(
+    () =>
+      allShifts.filter((s) => {
+        const d = new Date(s.date);
+        return d.getFullYear() === year && d.getMonth() === month;
+      }),
+    [allShifts, year, month]
+  );
 
   const totalHours = allShifts.length * 8;
 
@@ -86,6 +84,11 @@ export function MySchedule() {
 
   return (
     <div className="space-y-5">
+      {error && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-gray-900 text-lg font-semibold">My Schedule</h2>
@@ -128,6 +131,11 @@ export function MySchedule() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
+                {loading && (
+                  <tr>
+                    <td colSpan={4} className="text-center py-10 text-gray-400 text-sm">Loading...</td>
+                  </tr>
+                )}
                 {allShifts.map((s, i) => {
                   const isToday = s.date === today;
                   return (

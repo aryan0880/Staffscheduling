@@ -1,40 +1,19 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CalendarDays, Trash2, UserCheck, ChevronLeft, ChevronRight } from "lucide-react";
-
-const staffList = [
-  "Alice Brown", "Bob Kumar", "Carol Lee", "David Patel",
-  "Emma Wilson", "Frank Davis", "Grace Kim", "Henry Johnson",
-  "Isla Martinez", "James Carter",
-];
-
-const shiftList = [
-  { name: "Morning Shift", time: "6:00 AM – 2:00 PM" },
-  { name: "Afternoon Shift", time: "2:00 PM – 10:00 PM" },
-  { name: "Night Shift", time: "10:00 PM – 6:00 AM" },
-  { name: "Weekend Morning", time: "7:00 AM – 3:00 PM" },
-  { name: "Split Shift A", time: "8:00 AM – 12:00 PM" },
-  { name: "Late Evening", time: "6:00 PM – 12:00 AM" },
-];
+import { apiFetch, type ApiError } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 
 interface Assignment {
   id: number;
-  staff: string;
-  shift: string;
-  shiftTime: string;
+  staff: string; // display
+  staffId: number;
+  shift: string; // display
+  shiftId: number;
+  shiftTime: string; // display
   date: string;
 }
 
 const today = new Date().toISOString().split("T")[0];
-
-const initialAssignments: Assignment[] = [
-  { id: 1, staff: "Alice Brown", shift: "Morning Shift", shiftTime: "6:00 AM – 2:00 PM", date: "2025-02-26" },
-  { id: 2, staff: "Bob Kumar", shift: "Afternoon Shift", shiftTime: "2:00 PM – 10:00 PM", date: "2025-02-26" },
-  { id: 3, staff: "Carol Lee", shift: "Night Shift", shiftTime: "10:00 PM – 6:00 AM", date: "2025-02-26" },
-  { id: 4, staff: "David Patel", shift: "Morning Shift", shiftTime: "6:00 AM – 2:00 PM", date: "2025-02-27" },
-  { id: 5, staff: "Emma Wilson", shift: "Afternoon Shift", shiftTime: "2:00 PM – 10:00 PM", date: "2025-02-27" },
-  { id: 6, staff: "Frank Davis", shift: "Weekend Morning", shiftTime: "7:00 AM – 3:00 PM", date: "2025-03-01" },
-  { id: 7, staff: "Grace Kim", shift: "Night Shift", shiftTime: "10:00 PM – 6:00 AM", date: "2025-03-01" },
-];
 
 const formatDate = (d: string) =>
   new Date(d).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
@@ -49,21 +28,106 @@ function getFirstDayOfMonth(year: number, month: number) {
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 export function Schedule() {
-  const [assignments, setAssignments] = useState<Assignment[]>(initialAssignments);
-  const [form, setForm] = useState({ staff: staffList[0], shift: shiftList[0].name, date: today });
+  const { token } = useAuth();
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [staffList, setStaffList] = useState<{ id: number; name: string }[]>([]);
+  const [shiftList, setShiftList] = useState<{ id: number; name: string; startTime: string; endTime: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [form, setForm] = useState<{ staffId: number | null; shiftId: number | null; date: string }>({
+    staffId: null,
+    shiftId: null,
+    date: today,
+  });
   const [view, setView] = useState<"table" | "calendar">("table");
   const [calDate, setCalDate] = useState(new Date(2025, 1, 1)); // Feb 2025
 
-  const handleAssign = () => {
-    if (!form.staff || !form.shift || !form.date) return;
-    const shiftObj = shiftList.find((s) => s.name === form.shift);
-    setAssignments((prev) => [
-      { id: Date.now(), staff: form.staff, shift: form.shift, shiftTime: shiftObj?.time || "", date: form.date },
-      ...prev,
-    ]);
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!token) return;
+      setLoading(true);
+      setError("");
+      try {
+        const [staff, shifts, rawAssignments] = await Promise.all([
+          apiFetch<any[]>("/admin/staff", { token }),
+          apiFetch<any[]>("/admin/shifts", { token }),
+          apiFetch<any[]>("/admin/assignments", { token }),
+        ]);
+
+        if (cancelled) return;
+        const staffSimple = staff.map((s) => ({ id: s.id, name: s.name }));
+        const shiftsSimple = shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime }));
+        setStaffList(staffSimple);
+        setShiftList(shiftsSimple);
+
+        const mapped: Assignment[] = rawAssignments.map((a) => ({
+          id: a.id,
+          staff: a.user?.name || "Unknown",
+          staffId: a.userId,
+          shift: a.shift?.name || "Unknown",
+          shiftId: a.shiftId,
+          shiftTime: a.shift ? `${a.shift.startTime}–${a.shift.endTime}` : "",
+          date: new Date(a.date).toISOString().slice(0, 10),
+        }));
+        setAssignments(mapped);
+
+        setForm((prev) => ({
+          ...prev,
+          staffId: prev.staffId ?? (staffSimple[0]?.id ?? null),
+          shiftId: prev.shiftId ?? (shiftsSimple[0]?.id ?? null),
+        }));
+      } catch (e: any) {
+        const err = e as ApiError;
+        if (!cancelled) setError(err?.message || "Failed to load schedule data");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const handleAssign = async () => {
+    if (!token) return;
+    if (!form.staffId || !form.shiftId || !form.date) return;
+    setError("");
+    try {
+      const created = await apiFetch<any>("/admin/assignments", {
+        token,
+        method: "POST",
+        body: JSON.stringify({ userId: form.staffId, shiftId: form.shiftId, date: form.date }),
+      });
+      const mapped: Assignment = {
+        id: created.id,
+        staff: created.user?.name || "Unknown",
+        staffId: created.userId,
+        shift: created.shift?.name || "Unknown",
+        shiftId: created.shiftId,
+        shiftTime: created.shift ? `${created.shift.startTime}–${created.shift.endTime}` : "",
+        date: new Date(created.date).toISOString().slice(0, 10),
+      };
+      setAssignments((prev) => [mapped, ...prev]);
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Assignment failed");
+    }
   };
 
-  const handleDelete = (id: number) => setAssignments((prev) => prev.filter((a) => a.id !== id));
+  const handleDelete = async (id: number) => {
+    if (!token) return;
+    setError("");
+    try {
+      await apiFetch<void>(`/admin/assignments/${id}`, { token, method: "DELETE" });
+      setAssignments((prev) => prev.filter((a) => a.id !== id));
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Delete failed");
+    }
+  };
 
   const prevMonth = () => setCalDate((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1));
   const nextMonth = () => setCalDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
@@ -85,6 +149,12 @@ export function Schedule() {
         <p className="text-gray-500 text-sm mt-0.5">Assign staff to shifts and manage the schedule</p>
       </div>
 
+      {error && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
       {/* Assignment Form */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
         <h3 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -95,21 +165,21 @@ export function Schedule() {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Select Staff</label>
             <select
-              value={form.staff}
-              onChange={(e) => setForm({ ...form, staff: e.target.value })}
+              value={form.staffId ?? ""}
+              onChange={(e) => setForm({ ...form, staffId: Number(e.target.value) })}
               className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              {staffList.map((s) => <option key={s}>{s}</option>)}
+              {staffList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Select Shift</label>
             <select
-              value={form.shift}
-              onChange={(e) => setForm({ ...form, shift: e.target.value })}
+              value={form.shiftId ?? ""}
+              onChange={(e) => setForm({ ...form, shiftId: Number(e.target.value) })}
               className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
-              {shiftList.map((s) => <option key={s.name}>{s.name}</option>)}
+              {shiftList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <div>
@@ -136,7 +206,7 @@ export function Schedule() {
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div>
             <h3 className="text-sm font-semibold text-gray-900">Assigned Schedule</h3>
-            <p className="text-xs text-gray-400 mt-0.5">{assignments.length} assignments total</p>
+            <p className="text-xs text-gray-400 mt-0.5">{loading ? "Loading..." : `${assignments.length} assignments total`}</p>
           </div>
           <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
             <button

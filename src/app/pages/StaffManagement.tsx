@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Search, Plus, Pencil, Trash2, X, UserCircle } from "lucide-react";
+import { apiFetch, type ApiError } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 
 interface Staff {
   id: number;
@@ -8,20 +10,8 @@ interface Staff {
   department: string;
   contact: string;
   availability: string;
+  initials?: string;
 }
-
-const initialStaff: Staff[] = [
-  { id: 1, name: "Alice Brown", email: "alice@ssms.com", department: "Operations", contact: "+1-555-0101", availability: "Full-time" },
-  { id: 2, name: "Bob Kumar", email: "bob@ssms.com", department: "Security", contact: "+1-555-0102", availability: "Part-time" },
-  { id: 3, name: "Carol Lee", email: "carol@ssms.com", department: "Maintenance", contact: "+1-555-0103", availability: "Full-time" },
-  { id: 4, name: "David Patel", email: "david@ssms.com", department: "Reception", contact: "+1-555-0104", availability: "Full-time" },
-  { id: 5, name: "Emma Wilson", email: "emma@ssms.com", department: "Operations", contact: "+1-555-0105", availability: "On-call" },
-  { id: 6, name: "Frank Davis", email: "frank@ssms.com", department: "IT", contact: "+1-555-0106", availability: "Full-time" },
-  { id: 7, name: "Grace Kim", email: "grace@ssms.com", department: "HR", contact: "+1-555-0107", availability: "Part-time" },
-  { id: 8, name: "Henry Johnson", email: "henry@ssms.com", department: "Finance", contact: "+1-555-0108", availability: "Full-time" },
-  { id: 9, name: "Isla Martinez", email: "isla@ssms.com", department: "Operations", contact: "+1-555-0109", availability: "On-call" },
-  { id: 10, name: "James Carter", email: "james@ssms.com", department: "Security", contact: "+1-555-0110", availability: "Full-time" },
-];
 
 const depts = ["Operations", "Security", "Maintenance", "Reception", "IT", "HR", "Finance"];
 const availabilities = ["Full-time", "Part-time", "On-call"];
@@ -38,19 +28,47 @@ const availBadge = (a: string) => {
 const blank: Omit<Staff, "id"> = { name: "", email: "", department: depts[0], contact: "", availability: availabilities[0] };
 
 export function StaffManagement() {
-  const [staff, setStaff] = useState<Staff[]>(initialStaff);
+  const { token } = useAuth();
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>("");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<null | "add" | "edit">(null);
   const [form, setForm] = useState({ ...blank });
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
 
-  const filtered = staff.filter(
-    (s) =>
-      s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.email.toLowerCase().includes(search.toLowerCase()) ||
-      s.department.toLowerCase().includes(search.toLowerCase())
-  );
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!token) return;
+      setLoading(true);
+      setError("");
+      try {
+        const data = await apiFetch<Staff[]>("/admin/staff", { token });
+        if (!cancelled) setStaff(data);
+      } catch (e: any) {
+        const err = e as ApiError;
+        if (!cancelled) setError(err?.message || "Failed to load staff");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    return staff.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.email.toLowerCase().includes(q) ||
+        (s.department || "").toLowerCase().includes(q)
+    );
+  }, [staff, search]);
 
   const openAdd = () => { setForm({ ...blank }); setModal("add"); };
   const openEdit = (s: Staff) => {
@@ -60,19 +78,44 @@ export function StaffManagement() {
   };
   const closeModal = () => { setModal(null); setEditId(null); };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!token) return;
     if (!form.name || !form.email) return;
-    if (modal === "add") {
-      setStaff((prev) => [...prev, { ...form, id: Date.now() }]);
-    } else {
-      setStaff((prev) => prev.map((s) => (s.id === editId ? { ...s, ...form } : s)));
+    setError("");
+    try {
+      if (modal === "add") {
+        const created = await apiFetch<Staff>("/admin/staff", {
+          token,
+          method: "POST",
+          body: JSON.stringify(form),
+        });
+        setStaff((prev) => [...prev, created]);
+      } else if (editId != null) {
+        const updated = await apiFetch<Staff>(`/admin/staff/${editId}`, {
+          token,
+          method: "PUT",
+          body: JSON.stringify(form),
+        });
+        setStaff((prev) => prev.map((s) => (s.id === editId ? updated : s)));
+      }
+      closeModal();
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Save failed");
     }
-    closeModal();
   };
 
-  const handleDelete = (id: number) => {
-    setStaff((prev) => prev.filter((s) => s.id !== id));
-    setDeleteConfirm(null);
+  const handleDelete = async (id: number) => {
+    if (!token) return;
+    setError("");
+    try {
+      await apiFetch<void>(`/admin/staff/${id}`, { token, method: "DELETE" });
+      setStaff((prev) => prev.filter((s) => s.id !== id));
+      setDeleteConfirm(null);
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Delete failed");
+    }
   };
 
   return (
@@ -81,7 +124,9 @@ export function StaffManagement() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-gray-900 text-lg font-semibold">Staff Management</h2>
-          <p className="text-gray-500 text-sm mt-0.5">{staff.length} staff members registered</p>
+          <p className="text-gray-500 text-sm mt-0.5">
+            {loading ? "Loading staff..." : `${staff.length} staff members registered`}
+          </p>
         </div>
         <button
           onClick={openAdd}
@@ -91,6 +136,12 @@ export function StaffManagement() {
           Add Staff
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
 
       {/* Table Card */}
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
@@ -122,7 +173,13 @@ export function StaffManagement() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.length === 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="text-center py-12 text-gray-400 text-sm">
+                    Loading...
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="text-center py-12 text-gray-400 text-sm">
                     <UserCircle className="w-10 h-10 mx-auto mb-2 text-gray-200" />
@@ -135,7 +192,7 @@ export function StaffManagement() {
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 bg-blue-50 rounded-full flex items-center justify-center text-[#1E40AF] text-xs font-bold flex-shrink-0">
-                          {s.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+                          {s.initials || s.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
                         </div>
                         <span className="text-sm text-gray-900 font-medium">{s.name}</span>
                       </div>

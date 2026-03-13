@@ -1,7 +1,9 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router";
 import { Eye, EyeOff, Calendar, Lock, Mail, Shield, User } from "lucide-react";
-import { useAuth, STAFF_USERS, ADMIN_USER } from "../context/AuthContext";
+import { useAuth } from "../context/AuthContext";
+import { apiFetch, type ApiError } from "../api/client";
+import { GoogleLogin } from "@react-oauth/google";
 
 type DemoRole = "admin" | "staff";
 
@@ -26,31 +28,25 @@ export function Login() {
     setError("");
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     if (!email || !password) { setError("Please enter your credentials."); return; }
 
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await apiFetch<{ token: string; user: any }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      login(res.token, res.user);
+      navigate(res.user.role === "admin" ? "/app/dashboard" : "/staff/dashboard");
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Login failed");
+    } finally {
       setLoading(false);
-      // Admin check
-      if (email.trim() === "admin@ssms.com" && password === "admin123") {
-        login(ADMIN_USER);
-        navigate("/app/dashboard");
-        return;
-      }
-      // Staff check
-      const staffUser = STAFF_USERS.find(
-        (s) => s.email === email.trim().toLowerCase()
-      );
-      if (staffUser && password === "staff123") {
-        login(staffUser);
-        navigate("/staff/dashboard");
-        return;
-      }
-      setError("Invalid email or password. Try the demo credentials below.");
-    }, 800);
+    }
   };
 
   return (
@@ -134,6 +130,44 @@ export function Login() {
                 </>
               ) : "Sign In"}
             </button>
+
+            <div className="relative py-4">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-200"></div>
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-white px-2 text-gray-500">Or continue with</span>
+              </div>
+            </div>
+
+            <div className="flex justify-center">
+              <GoogleLogin
+                onSuccess={async (credentialResponse) => {
+                  if (credentialResponse.credential) {
+                    setLoading(true);
+                    try {
+                      const res = await apiFetch<{ token: string; user: any }>("/auth/google", {
+                        method: "POST",
+                        body: JSON.stringify({ credential: credentialResponse.credential }),
+                      });
+                      login(res.token, res.user);
+                      navigate(res.user.role === "admin" ? "/app/dashboard" : "/staff/dashboard");
+                    } catch (e: any) {
+                      setError(e?.message || "Google login failed");
+                    } finally {
+                      setLoading(false);
+                    }
+                  }
+                }}
+                onError={() => {
+                  setError("Google login failed");
+                }}
+                useOneTap
+                theme="outline"
+                shape="rectangular"
+                width="100%"
+              />
+            </div>
           </form>
 
           {/* Demo Credentials */}

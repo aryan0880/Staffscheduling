@@ -1,5 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Plus, Pencil, Trash2, X, Clock } from "lucide-react";
+import { apiFetch, type ApiError } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 
 interface Shift {
   id: number;
@@ -9,15 +11,6 @@ interface Shift {
   type: string;
   staffCount: number;
 }
-
-const initialShifts: Shift[] = [
-  { id: 1, name: "Morning Shift", startTime: "06:00", endTime: "14:00", type: "Regular", staffCount: 12 },
-  { id: 2, name: "Afternoon Shift", startTime: "14:00", endTime: "22:00", type: "Regular", staffCount: 10 },
-  { id: 3, name: "Night Shift", startTime: "22:00", endTime: "06:00", type: "Regular", staffCount: 6 },
-  { id: 4, name: "Weekend Morning", startTime: "07:00", endTime: "15:00", type: "Weekend", staffCount: 5 },
-  { id: 5, name: "Split Shift A", startTime: "08:00", endTime: "12:00", type: "Split", staffCount: 4 },
-  { id: 6, name: "Late Evening", startTime: "18:00", endTime: "24:00", type: "Regular", staffCount: 7 },
-];
 
 const shiftTypes = ["Regular", "Weekend", "Split", "Overtime", "On-call"];
 
@@ -52,11 +45,36 @@ const calcDuration = (start: string, end: string) => {
 const blank = { name: "", startTime: "09:00", endTime: "17:00", type: "Regular", staffCount: 0 };
 
 export function ShiftManagement() {
-  const [shifts, setShifts] = useState<Shift[]>(initialShifts);
+  const { token } = useAuth();
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [modal, setModal] = useState<null | "add" | "edit">(null);
   const [form, setForm] = useState({ ...blank });
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      if (!token) return;
+      setLoading(true);
+      setError("");
+      try {
+        const data = await apiFetch<Shift[]>("/admin/shifts", { token });
+        if (!cancelled) setShifts(data);
+      } catch (e: any) {
+        const err = e as ApiError;
+        if (!cancelled) setError(err?.message || "Failed to load shifts");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const openAdd = () => { setForm({ ...blank }); setModal("add"); };
   const openEdit = (s: Shift) => {
@@ -66,19 +84,44 @@ export function ShiftManagement() {
   };
   const closeModal = () => { setModal(null); setEditId(null); };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!token) return;
     if (!form.name) return;
-    if (modal === "add") {
-      setShifts((prev) => [...prev, { ...form, id: Date.now() }]);
-    } else {
-      setShifts((prev) => prev.map((s) => (s.id === editId ? { ...s, ...form } : s)));
+    setError("");
+    try {
+      if (modal === "add") {
+        const created = await apiFetch<Shift>("/admin/shifts", {
+          token,
+          method: "POST",
+          body: JSON.stringify(form),
+        });
+        setShifts((prev) => [...prev, created]);
+      } else if (editId != null) {
+        const updated = await apiFetch<Shift>(`/admin/shifts/${editId}`, {
+          token,
+          method: "PUT",
+          body: JSON.stringify(form),
+        });
+        setShifts((prev) => prev.map((s) => (s.id === editId ? updated : s)));
+      }
+      closeModal();
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Save failed");
     }
-    closeModal();
   };
 
-  const handleDelete = (id: number) => {
-    setShifts((prev) => prev.filter((s) => s.id !== id));
-    setDeleteConfirm(null);
+  const handleDelete = async (id: number) => {
+    if (!token) return;
+    setError("");
+    try {
+      await apiFetch<void>(`/admin/shifts/${id}`, { token, method: "DELETE" });
+      setShifts((prev) => prev.filter((s) => s.id !== id));
+      setDeleteConfirm(null);
+    } catch (e: any) {
+      const err = e as ApiError;
+      setError(err?.message || "Delete failed");
+    }
   };
 
   return (
@@ -87,7 +130,7 @@ export function ShiftManagement() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-gray-900 text-lg font-semibold">Shift Management</h2>
-          <p className="text-gray-500 text-sm mt-0.5">{shifts.length} shifts configured</p>
+          <p className="text-gray-500 text-sm mt-0.5">{loading ? "Loading shifts..." : `${shifts.length} shifts configured`}</p>
         </div>
         <button
           onClick={openAdd}
@@ -97,6 +140,12 @@ export function ShiftManagement() {
           Create Shift
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -159,6 +208,11 @@ export function ShiftManagement() {
                   </td>
                 </tr>
               ))}
+              {loading && (
+                <tr>
+                  <td colSpan={7} className="text-center py-10 text-gray-400 text-sm">Loading...</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
