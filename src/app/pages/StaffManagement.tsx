@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Search, Plus, Pencil, Trash2, X, UserCircle } from "lucide-react";
+import { Search, Plus, Pencil, Trash2, X, UserCircle, Eye, EyeOff, Lock } from "lucide-react";
 import { apiFetch, type ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 
@@ -25,7 +25,16 @@ const availBadge = (a: string) => {
   return `inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium ${map[a] || "bg-gray-100 text-gray-600"}`;
 };
 
-const blank: Omit<Staff, "id"> = { name: "", email: "", department: depts[0], contact: "", availability: availabilities[0] };
+type StaffForm = Omit<Staff, "id" | "initials"> & { password?: string };
+
+const blank: StaffForm = {
+  name: "",
+  email: "",
+  department: depts[0],
+  contact: "",
+  availability: availabilities[0],
+  password: "",
+};
 
 export function StaffManagement() {
   const { token } = useAuth();
@@ -37,6 +46,7 @@ export function StaffManagement() {
   const [form, setForm] = useState({ ...blank });
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,31 +80,49 @@ export function StaffManagement() {
     );
   }, [staff, search]);
 
-  const openAdd = () => { setForm({ ...blank }); setModal("add"); };
+  const openAdd = () => {
+    setForm({ ...blank });
+    setShowPassword(false);
+    setModal("add");
+  };
   const openEdit = (s: Staff) => {
-    setForm({ name: s.name, email: s.email, department: s.department, contact: s.contact, availability: s.availability });
+    setForm({ name: s.name, email: s.email, department: s.department, contact: s.contact, availability: s.availability, password: "" });
     setEditId(s.id);
+    setShowPassword(false);
     setModal("edit");
   };
-  const closeModal = () => { setModal(null); setEditId(null); };
+  const closeModal = () => {
+    setModal(null);
+    setEditId(null);
+    setShowPassword(false);
+  };
 
   const handleSave = async () => {
     if (!token) return;
     if (!form.name || !form.email) return;
     setError("");
     try {
+      const payload: any = {
+        name: form.name,
+        email: form.email,
+        department: form.department,
+        contact: form.contact,
+        availability: form.availability,
+      };
+      if (form.password && form.password.trim().length > 0) payload.password = form.password;
+
       if (modal === "add") {
         const created = await apiFetch<Staff>("/admin/staff", {
           token,
           method: "POST",
-          body: JSON.stringify(form),
+          body: JSON.stringify(payload),
         });
         setStaff((prev) => [...prev, created]);
       } else if (editId != null) {
         const updated = await apiFetch<Staff>(`/admin/staff/${editId}`, {
           token,
           method: "PUT",
-          body: JSON.stringify(form),
+          body: JSON.stringify(payload),
         });
         setStaff((prev) => prev.map((s) => (s.id === editId ? updated : s)));
       }
@@ -261,6 +289,34 @@ export function StaffManagement() {
                   />
                 </div>
               ))}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  {modal === "add" ? "Password (optional)" : "New Password (optional)"}
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={form.password || ""}
+                    onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    placeholder={modal === "add" ? "Leave blank to use default: staff123" : "Leave blank to keep current password"}
+                    className="w-full pl-10 pr-10 py-2.5 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {modal === "add" && (
+                  <p className="mt-1 text-xs text-gray-400">
+                    If you don’t set one, the default password is <span className="font-medium text-gray-600">staff123</span>.
+                  </p>
+                )}
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Department</label>
                 <select

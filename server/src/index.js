@@ -59,7 +59,11 @@ app.use((err, _req, res, _next) => {
   }
 
   console.error(err);
-  res.status(500).json({ error: "Internal server error" });
+  res.status(500).json({ 
+    error: "Internal server error", 
+    message: err.message,
+    stack: process.env.NODE_ENV === "production" ? undefined : err.stack
+  });
 });
 
 app.listen(env.PORT, () => {

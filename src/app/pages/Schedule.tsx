@@ -41,7 +41,7 @@ export function Schedule() {
     date: today,
   });
   const [view, setView] = useState<"table" | "calendar">("table");
-  const [calDate, setCalDate] = useState(new Date(2025, 1, 1)); // Feb 2025
+  const [calDate, setCalDate] = useState(new Date()); // Default to current month/year
 
   useEffect(() => {
     let cancelled = false;

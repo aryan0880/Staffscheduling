@@ -3,9 +3,9 @@ function defaultApiBaseUrl() {
   try {
     const host = window.location.hostname;
     const proto = window.location.protocol;
-    return `${proto}//${host}:5174`;
+    return `${proto}//${host}:5000`;
   } catch {
-    return "http://localhost:5174";
+    return "http://localhost:5000";
   }
 }
 
