@@ -131,43 +131,47 @@ export function Login() {
               ) : "Sign In"}
             </button>
 
-            <div className="relative py-4">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-200"></div>
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-white px-2 text-gray-500">Or continue with</span>
-              </div>
-            </div>
+            {(import.meta as any).env.VITE_GOOGLE_CLIENT_ID && (
+              <>
+                <div className="relative py-4">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-200"></div>
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-white px-2 text-gray-500">Or continue with</span>
+                  </div>
+                </div>
 
-            <div className="flex justify-center">
-              <GoogleLogin
-                onSuccess={async (credentialResponse) => {
-                  if (credentialResponse.credential) {
-                    setLoading(true);
-                    try {
-                      const res = await apiFetch<{ token: string; user: any }>("/auth/google", {
-                        method: "POST",
-                        body: JSON.stringify({ credential: credentialResponse.credential }),
-                      });
-                      login(res.token, res.user);
-                      navigate(res.user.role === "admin" ? "/app/dashboard" : "/staff/dashboard");
-                    } catch (e: any) {
-                      setError(e?.message || "Google login failed");
-                    } finally {
-                      setLoading(false);
-                    }
-                  }
-                }}
-                onError={() => {
-                  setError("Google login failed");
-                }}
-                useOneTap
-                theme="outline"
-                shape="rectangular"
-                width="100%"
-              />
-            </div>
+                <div className="flex justify-center">
+                  <GoogleLogin
+                    onSuccess={async (credentialResponse) => {
+                      if (credentialResponse.credential) {
+                        setLoading(true);
+                        try {
+                          const res = await apiFetch<{ token: string; user: any }>("/auth/google", {
+                            method: "POST",
+                            body: JSON.stringify({ credential: credentialResponse.credential }),
+                          });
+                          login(res.token, res.user);
+                          navigate(res.user.role === "admin" ? "/app/dashboard" : "/staff/dashboard");
+                        } catch (e: any) {
+                          setError(e?.message || "Google login failed");
+                        } finally {
+                          setLoading(false);
+                        }
+                      }
+                    }}
+                    onError={() => {
+                      setError("Google login failed");
+                    }}
+                    useOneTap
+                    theme="outline"
+                    shape="rectangular"
+                    width="100%"
+                  />
+                </div>
+              </>
+            )}
           </form>
 
           {/* Demo Credentials */}
